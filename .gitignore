@@ -1,0 +1,11 @@
+# Build output
+build/
+out/
+.vs/
+*.user
+
+# Test documents are fetched on demand; see tools/fetch-samples.ps1
+samples/
+
+# Probe output
+*.ppm

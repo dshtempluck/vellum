@@ -1,0 +1,14 @@
+# Normalise text to LF in the repository; Git checks out native endings.
+* text=auto eol=lf
+
+# Windows-native files keep CRLF in the working tree.
+*.ps1   text eol=crlf
+*.rc    text eol=crlf
+*.manifest text eol=crlf
+
+# Binaries must never be touched.
+*.dll   binary
+*.lib   binary
+*.png   binary
+*.djvu  binary
+*.pdf   binary

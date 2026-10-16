@@ -71,6 +71,26 @@ class Document {
 
   // Document-level metadata, empty when absent.
   virtual std::string title() const { return std::string(); }
+
+  // The page to show when the document opens. Normally the first one, but
+  // a backend that presents something other than a single file as a
+  // document -- an image folder, say -- needs to open on the item the
+  // user actually asked for.
+  virtual int initial_page() const { return 0; }
+
+  // An optional name for one page, shown in the status bar. Empty when
+  // pages have no identity of their own beyond their number.
+  virtual std::string page_label(int page) const {
+    (void)page;
+    return std::string();
+  }
+
+  // True when the pages are unrelated to one another -- separate files
+  // that happen to sit together, rather than a document that reads front
+  // to back. The viewer shows these one at a time, because scrolling
+  // continuously through a folder of differently sized pictures is not
+  // what anyone means by "next".
+  virtual bool pages_are_independent() const { return false; }
 };
 
 // Opens `path`, choosing a backend by content and extension. Throws

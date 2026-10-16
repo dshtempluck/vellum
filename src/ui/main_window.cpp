@@ -265,27 +265,37 @@ void SyncStatus(FrameData* d) {
                reinterpret_cast<LPARAM>(zoom.c_str()));
 
   const PageGeometry g = s->doc->geometry(s->page);
-  wchar_t buf[128];
-  swprintf(buf, 128, L"%s   %.2f × %.2f in",
+  wchar_t buf[256];
+  swprintf(buf, 256, L"%s   %.2f × %.2f in",
            Utf8ToWide(s->doc->format_name()).c_str(), g.width_pt / 72.0,
            g.height_pt / 72.0);
-  SendMessageW(d->status, SB_SETTEXTW, 2, reinterpret_cast<LPARAM>(buf));
+  std::wstring info = buf;
+  const std::string label = s->doc->page_label(s->page);
+  if (!label.empty()) info = Utf8ToWide(label) + L"   " + info;
+  SendMessageW(d->status, SB_SETTEXTW, 2,
+               reinterpret_cast<LPARAM>(info.c_str()));
 }
+
+void SyncTitle(FrameData* d);
 
 void SyncAll(FrameData* d) {
   ToolbarSyncState(d->toolbar);
   NavPaneSyncPage(d->nav);
   SyncStatus(d);
   SyncMenu(d);
+  SyncTitle(d);
   InvalidateRect(d->nav, nullptr, FALSE);
 }
 
 void SyncTitle(FrameData* d) {
   std::wstring title;
   if (d->state.has_doc()) {
-    title = d->state.file_name;
+    // A backend whose pages are separate files names the one being shown,
+    // so browsing a folder of images retitles the window as you go.
+    const std::string label = d->state.doc->page_label(d->state.page);
+    title = label.empty() ? d->state.file_name : Utf8ToWide(label);
     const std::string dt = d->state.doc->title();
-    if (!dt.empty()) title = Utf8ToWide(dt) + L" — " + title;
+    if (!dt.empty()) title = title + L" — " + Utf8ToWide(dt);
     title += L" - ";
   }
   title += kAppName;
@@ -337,9 +347,22 @@ void OpenPath(FrameData* d, const std::wstring& path) {
   d->state.text_loaded.assign(
       static_cast<size_t>(d->state.doc->page_count()), false);
 
+  // Unrelated pages are shown one at a time, so next/previous means the
+  // next picture rather than a scroll through the whole folder, and the
+  // whole picture is fitted rather than just its width. An explicit zoom
+  // the user set is left alone.
+  if (d->state.doc->pages_are_independent()) {
+    if (d->state.layout.is_continuous())
+      d->state.layout.set_layout(PageLayout::kSinglePage);
+    if (d->state.layout.zoom_mode() != ZoomMode::kCustom)
+      d->state.layout.set_zoom_mode(ZoomMode::kFitPage);
+  }
+
+  d->state.page = std::clamp(d->state.doc->initial_page(), 0,
+                             d->state.doc->page_count() - 1);
   PageViewDocumentChanged(d->view);
   NavPaneDocumentChanged(d->nav);
-  SyncTitle(d);
+  if (d->state.page > 0) PageViewScrollToPage(d->view, d->state.page);
   SyncAll(d);
 }
 
@@ -349,9 +372,14 @@ void ShowOpenDialog(FrameData* d) {
   ofn.lStructSize = sizeof(ofn);
   ofn.hwndOwner = d->hwnd;
   ofn.lpstrFilter =
-      L"All supported documents\0*.pdf;*.djvu;*.djv\0"
+      L"All supported files\0"
+      L"*.pdf;*.djvu;*.djv;*.jpg;*.jpeg;*.jpe;*.jfif;*.png;*.bmp;*.gif;"
+      L"*.tif;*.tiff;*.webp;*.heic;*.heif;*.avif;*.ico\0"
       L"PDF documents (*.pdf)\0*.pdf\0"
       L"DjVu documents (*.djvu;*.djv)\0*.djvu;*.djv\0"
+      L"Images (*.jpg;*.png;*.gif;*.bmp;*.tif;*.webp)\0"
+      L"*.jpg;*.jpeg;*.jpe;*.jfif;*.png;*.bmp;*.gif;*.tif;*.tiff;*.webp;"
+      L"*.heic;*.heif;*.avif;*.ico\0"
       L"All files\0*.*\0";
   ofn.lpstrFile = file;
   ofn.nMaxFile = MAX_PATH * 4;

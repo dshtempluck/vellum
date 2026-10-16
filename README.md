@@ -1,6 +1,6 @@
 # Vellum
 
-A PDF and DjVu viewer for Windows, in C++20.
+A PDF, DjVu and image viewer for Windows, in C++20.
 
 It reproduces the way Adobe Acrobat's viewer behaves — the same zoom and
 fit modes, the same six page layouts, the same hand/select/marquee tools,
@@ -10,6 +10,12 @@ selection and copy — and adds DjVu, which Acrobat does not read at all.
 PDF rendering uses PDFium. **DjVu is decoded by this project**: the IFF
 container, the ZP arithmetic coder, BZZ, the JB2 bitonal codec and the
 IW44 wavelet codec are all implemented here, from the format definition.
+Still images (JPEG, PNG, GIF, BMP, TIFF, and WebP/HEIF where Windows
+supports them) go through the Windows Imaging Component.
+
+Opening a picture opens its **folder**: every image beside it becomes a
+page, sorted the way Explorer sorts them, so next and previous step
+through the directory and the thumbnail pane becomes a contact sheet.
 
 ![the viewer](docs/screenshot.png)
 
@@ -59,6 +65,7 @@ back end has something to open.
 vellum.exe                      # empty, use File > Open
 vellum.exe document.pdf
 vellum.exe scan.djvu
+vellum.exe photo.jpg            # opens the whole folder, starting here
 ```
 
 Drag and drop works, as does opening from Explorer.
@@ -112,6 +119,7 @@ src/
   core/        bytes, bitmaps, geometry           (Acrobat's AS layer)
   djvu/        iff zp bzz jb2 iw44 document       DjVu, implemented here
   pdf/         document.cpp                       PDFium adapter
+  image/       document.cpp                       JPEG/PNG/... via WIC
   doc/         document.h                         the model the UI sees  (PD)
   view/        layout.cpp  render_cache.cpp       page placement, async render
   ui/          main_window toolbar nav_pane
@@ -129,8 +137,9 @@ LayoutEngine ── page rectangles in document space
       │
 PageView paints ── asks RenderCache for each visible page
       │                      │
-      │              worker thread ── Document::Render ──┬── PdfDocument  → PDFium
-      │                      │                           └── DjvuDocument → JB2 + IW44
+      │              worker thread ── Document::Render ──┬── PdfDocument   → PDFium
+      │                      │                           ├── DjvuDocument  → JB2 + IW44
+      │                      │                           └── ImageDocument → WIC
       └── blits the BGR bitmap, or scales another size while waiting
 ```
 
@@ -147,6 +156,10 @@ Three decisions carry most of the weight:
 * **Text positions are normalised to the page.** Selection and search
   results are stored as fractions of the page box, so they survive zoom,
   rotation and layout changes without recomputation.
+* **A "page" is whatever the backend says it is.** Nothing above the
+  document model knows a page might be a separate file, which is why a
+  folder of pictures gets thumbnails, a page box, zoom, rotation and
+  next/previous without a line of image-specific UI code.
 
 ### DjVu decoding
 

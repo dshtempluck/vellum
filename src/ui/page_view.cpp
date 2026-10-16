@@ -727,6 +727,12 @@ void PageViewScrollToPage(HWND view, int page) {
     Relayout(d, false);
     return;
   }
+
+  // A fit mode sizes pages against the anchor page. When pages differ in
+  // size -- a folder of pictures, or a document with a landscape plate --
+  // arriving at a new page means refitting to it.
+  if (s->layout.zoom_mode() != ZoomMode::kCustom) Relayout(d, false);
+
   const PagePlacement* p = s->current.Find(s->page);
   if (!p) {
     Relayout(d, false);

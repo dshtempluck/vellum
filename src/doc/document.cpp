@@ -5,6 +5,7 @@
 
 #include "core/bytes.h"
 #include "djvu/document.h"
+#include "image/document.h"
 
 #if VELLUM_HAVE_PDF
 #include "pdf/document.h"
@@ -45,7 +46,19 @@ std::unique_ptr<Document> OpenDocument(const std::wstring& path) {
 #endif
   }
 
-  throw FormatError("unrecognised file format (expected PDF or DjVu)");
+  // Images are opened by path rather than by the bytes already read: the
+  // backend presents the whole folder, and the platform decoder wants a
+  // filename anyway. The extension is a fallback for formats whose
+  // signature we do not list, such as a WIC codec installed separately.
+  if (image::LooksLikeImage(bytes.data(), bytes.size()) ||
+      image::HasImageExtension(path)) {
+    bytes.clear();
+    bytes.shrink_to_fit();
+    return image::ImageDocument::Open(path);
+  }
+
+  throw FormatError(
+      "unrecognised file format (expected PDF, DjVu, or an image)");
 }
 
 }  // namespace vellum

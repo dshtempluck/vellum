@@ -32,8 +32,18 @@ bool WritePpm(const std::string& path, const vellum::Pixmap& pm) {
   FILE* f = std::fopen(path.c_str(), "wb");
   if (!f) return false;
   std::fprintf(f, "P6\n%d %d\n255\n", pm.width(), pm.height());
-  for (int y = 0; y < pm.height(); ++y)
-    std::fwrite(pm.row(y), 1, static_cast<size_t>(pm.width()) * 3, f);
+  // Pixmap stores B, G, R -- the order GDI and PDFium want. PPM wants
+  // R, G, B, so the two outer channels swap on the way out.
+  std::vector<unsigned char> line(static_cast<size_t>(pm.width()) * 3);
+  for (int y = 0; y < pm.height(); ++y) {
+    const unsigned char* src = pm.row(y);
+    for (int x = 0; x < pm.width(); ++x) {
+      line[x * 3 + 0] = src[x * 3 + 2];
+      line[x * 3 + 1] = src[x * 3 + 1];
+      line[x * 3 + 2] = src[x * 3 + 0];
+    }
+    std::fwrite(line.data(), 1, line.size(), f);
+  }
   std::fclose(f);
   return true;
 }
@@ -69,11 +79,18 @@ int main(int argc, char** argv) {
     if (cmd == "info") {
       std::printf("format : %s\n", doc->format_name().c_str());
       std::printf("pages  : %d\n", doc->page_count());
+      if (!doc->title().empty())
+        std::printf("title  : %s\n", doc->title().c_str());
+      if (doc->initial_page() != 0)
+        std::printf("opens  : page %d\n", doc->initial_page() + 1);
       const int show = doc->page_count() < 8 ? doc->page_count() : 8;
       for (int i = 0; i < show; ++i) {
         const vellum::PageGeometry g = doc->geometry(i);
-        std::printf("  page %-3d %8.2f x %8.2f pt   rotation %d\n", i + 1,
+        std::printf("  page %-3d %8.2f x %8.2f pt   rotation %d", i + 1,
                     g.width_pt, g.height_pt, g.rotation);
+        const std::string label = doc->page_label(i);
+        if (!label.empty()) std::printf("   %s", label.c_str());
+        std::printf("\n");
       }
       if (show < doc->page_count()) std::printf("  ...\n");
       if (!doc->outline().empty()) {

@@ -30,9 +30,12 @@ add_library(vellum_core STATIC
   src/djvu/jb2.cpp
   src/djvu/iw44.cpp
   src/djvu/document.cpp
+  src/image/document.cpp
   src/doc/document.cpp
 )
 target_include_directories(vellum_core PUBLIC src)
+# Still images decode through the Windows Imaging Component.
+target_link_libraries(vellum_core PUBLIC windowscodecs shlwapi ole32)
 
 # ---------------------------------------------------------------------------
 # PDF support via PDFium. Point PDFIUM_ROOT at a prebuilt SDK containing

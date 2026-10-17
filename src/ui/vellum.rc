@@ -1,7 +1,14 @@
 #include <winresrc.h>
 
+#include "resource.h"
+
 // The side-by-side manifest: visual styles and per-monitor DPI.
 1 RT_MANIFEST "vellum.manifest"
+
+// The application icon, as a multi-resolution .ico: 16 through 256 pixels,
+// so the title bar, the taskbar, Alt+Tab and Explorer's extra-large view
+// each take a frame drawn for their size instead of a rescaled one.
+IDI_VELLUM ICON "vellum.ico"
 
 VS_VERSION_INFO VERSIONINFO
   FILEVERSION 1,0,0,0

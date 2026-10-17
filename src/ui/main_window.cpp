@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "core/bytes.h"
+#include "ui/resource.h"
 
 namespace vellum::ui {
 
@@ -1140,8 +1141,18 @@ HWND CreateMainWindow(const std::vector<std::wstring>& open_paths) {
   wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
   wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
   wc.lpszClassName = kClassName;
-  wc.hIcon = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1));
-  wc.hIconSm = wc.hIcon;
+  // LoadIcon would hand back the 32-pixel frame for both slots and leave
+  // the title bar to shrink it. Asking for each metric by size instead
+  // picks the frame that was drawn at that size, which is the whole point
+  // of shipping a multi-resolution icon.
+  const auto load_icon = [](int cx, int cy) {
+    return static_cast<HICON>(
+        LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDI_VELLUM),
+                   IMAGE_ICON, cx, cy, LR_DEFAULTCOLOR | LR_SHARED));
+  };
+  wc.hIcon = load_icon(GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON));
+  wc.hIconSm =
+      load_icon(GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON));
   RegisterClassExW(&wc);
 
   // Open at a readable fraction of the work area rather than a fixed pixel

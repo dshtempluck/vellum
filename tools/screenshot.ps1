@@ -12,7 +12,7 @@
   .\screenshot.ps1 -Document a.pdf -Out shot.png -Keys '^2','{F4}'
 #>
 param(
-  [Parameter(Mandatory = $true)][string]$Document,
+  [Parameter(Mandatory = $true)][string[]]$Document,
   [Parameter(Mandatory = $true)][string]$Out,
   [int]$SettleMs = 2500,
   [string[]]$Keys = @(),
@@ -51,7 +51,10 @@ $exe = Join-Path $PSScriptRoot "..\build\vellum.exe"
 if (-not (Test-Path $exe)) { throw "vellum.exe not built" }
 $Out = [System.IO.Path]::GetFullPath($Out)
 
-$proc = Start-Process -FilePath $exe -ArgumentList "`"$Document`"" -PassThru
+# Several documents open as several tabs, which is how the tab strip is
+# exercised without driving the file dialog.
+$quoted = ($Document | ForEach-Object { '"' + $_ + '"' }) -join ' '
+$proc = Start-Process -FilePath $exe -ArgumentList $quoted -PassThru
 try {
   $deadline = (Get-Date).AddSeconds(20)
   while ((Get-Date) -lt $deadline) {

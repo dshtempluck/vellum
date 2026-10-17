@@ -6,12 +6,13 @@
 #include <shellapi.h>
 
 #include <cmath>
+#include <vector>
 #include <iterator>
 #include <string>
 
 namespace vellum::ui {
 
-HWND CreateMainWindow(const std::wstring& open_path);
+HWND CreateMainWindow(const std::vector<std::wstring>& open_paths);
 
 // Shortcuts that carry a modifier are safe to dispatch globally: they do
 // not collide with typing in the page or zoom boxes. Plain-key shortcuts
@@ -20,7 +21,7 @@ HWND CreateMainWindow(const std::wstring& open_path);
 HACCEL BuildAccelerators() {
   const ACCEL table[] = {
       {FVIRTKEY | FCONTROL, 'O', kCmdFileOpen},
-      {FVIRTKEY | FCONTROL, 'W', kCmdFileClose},
+      {FVIRTKEY | FCONTROL, 'W', kCmdTabClose},
       {FVIRTKEY | FCONTROL, 'D', kCmdFileProperties},
       {FVIRTKEY | FCONTROL, 'C', kCmdEditCopy},
       {FVIRTKEY | FCONTROL, 'A', kCmdEditSelectAll},
@@ -41,6 +42,10 @@ HACCEL BuildAccelerators() {
       {FVIRTKEY | FCONTROL | FSHIFT, VK_ADD, kCmdRotateCW},
       {FVIRTKEY | FCONTROL | FSHIFT, VK_OEM_MINUS, kCmdRotateCCW},
       {FVIRTKEY | FCONTROL | FSHIFT, VK_SUBTRACT, kCmdRotateCCW},
+      {FVIRTKEY | FCONTROL, VK_TAB, kCmdTabNext},
+      {FVIRTKEY | FCONTROL | FSHIFT, VK_TAB, kCmdTabPrev},
+      {FVIRTKEY | FCONTROL, VK_F4, kCmdTabClose},
+      {FVIRTKEY | FCONTROL | FSHIFT, 'O', kCmdFileOpenHere},
       {FVIRTKEY | FCONTROL, VK_HOME, kCmdPageFirst},
       {FVIRTKEY | FCONTROL, VK_END, kCmdPageLast},
   };
@@ -48,7 +53,7 @@ HACCEL BuildAccelerators() {
                                  static_cast<int>(std::size(table)));
 }
 
-const std::vector<TextRun>& AppState::TextFor(int index) {
+const std::vector<TextRun>& DocumentTab::TextFor(int index) {
   static const std::vector<TextRun> kEmpty;
   if (!doc || index < 0 || index >= static_cast<int>(text_cache.size()))
     return kEmpty;
@@ -61,9 +66,18 @@ const std::vector<TextRun>& AppState::TextFor(int index) {
   return text_cache[index];
 }
 
-void AppState::ResetTextCache() {
+void DocumentTab::ResetTextCache() {
   text_cache.clear();
   text_loaded.clear();
+}
+
+std::wstring DocumentTab::Label() const {
+  if (!doc) return L"Untitled";
+  // A backend whose pages are separate files names the one being shown,
+  // so a tab browsing a folder of pictures tracks the current picture.
+  const std::string page_name = doc->page_label(page);
+  if (!page_name.empty()) return Utf8ToWide(page_name);
+  return file_name.empty() ? L"Untitled" : file_name;
 }
 
 std::wstring FormatZoom(double zoom) {
@@ -106,22 +120,19 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
                                ICC_STANDARD_CLASSES | ICC_WIN95_CLASSES};
   InitCommonControlsEx(&icc);
 
-  // A path on the command line opens straight away, which is what makes
-  // "open with" and file associations work.
-  std::wstring open_path;
+  // Paths on the command line open straight away, which is what makes
+  // "open with" and file associations work. Several arrive when a
+  // multiple selection is opened from Explorer; each gets its own tab.
+  std::vector<std::wstring> open_paths;
   int argc = 0;
   LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
   if (argv) {
-    for (int i = 1; i < argc; ++i) {
-      if (argv[i][0] != L'-') {
-        open_path = argv[i];
-        break;
-      }
-    }
+    for (int i = 1; i < argc; ++i)
+      if (argv[i][0] != L'-') open_paths.emplace_back(argv[i]);
     LocalFree(argv);
   }
 
-  HWND main = vellum::ui::CreateMainWindow(open_path);
+  HWND main = vellum::ui::CreateMainWindow(open_paths);
   if (!main) return 1;
   HACCEL accel = vellum::ui::BuildAccelerators();
 

@@ -37,6 +37,7 @@ struct FrameData {
   AppState state;
   HWND hwnd = nullptr;
   HWND toolbar = nullptr;
+  HWND tabs = nullptr;
   HWND nav = nullptr;
   HWND view = nullptr;
   HWND find = nullptr;
@@ -59,7 +60,9 @@ HMENU BuildMenu() {
 
   HMENU file = CreatePopupMenu();
   AppendMenuW(file, MF_STRING, kCmdFileOpen, L"&Open...\tCtrl+O");
-  AppendMenuW(file, MF_STRING, kCmdFileClose, L"&Close\tCtrl+W");
+  AppendMenuW(file, MF_STRING, kCmdFileOpenHere,
+              L"Open in &This Tab...\tCtrl+Shift+O");
+  AppendMenuW(file, MF_STRING, kCmdFileClose, L"&Close Tab\tCtrl+W");
   AppendMenuW(file, MF_SEPARATOR, 0, nullptr);
   AppendMenuW(file, MF_STRING, kCmdFileProperties, L"P&roperties...\tCtrl+D");
   AppendMenuW(file, MF_SEPARATOR, 0, nullptr);
@@ -126,6 +129,14 @@ HMENU BuildMenu() {
   AppendMenuW(tools, MF_STRING, kCmdToolMarquee, L"&Marquee Zoom\tZ");
   AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(tools), L"&Tools");
 
+  HMENU window = CreatePopupMenu();
+  AppendMenuW(window, MF_STRING, kCmdTabNext, L"&Next Tab\tCtrl+Tab");
+  AppendMenuW(window, MF_STRING, kCmdTabPrev,
+              L"&Previous Tab\tCtrl+Shift+Tab");
+  AppendMenuW(window, MF_SEPARATOR, 0, nullptr);
+  AppendMenuW(window, MF_STRING, kCmdTabClose, L"&Close Tab\tCtrl+W");
+  AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(window), L"&Window");
+
   HMENU help = CreatePopupMenu();
   AppendMenuW(help, MF_STRING, kCmdHelpAbout, L"&About Vellum");
   AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(help), L"&Help");
@@ -143,14 +154,14 @@ void SyncMenu(FrameData* d) {
     EnableMenuItem(m, id, MF_BYCOMMAND | (on ? MF_ENABLED : MF_GRAYED));
   };
 
-  const PageLayout l = s->layout.layout();
+  const PageLayout l = s->t().layout.layout();
   check(kCmdLayoutSingle, l == PageLayout::kSinglePage);
   check(kCmdLayoutContinuous, l == PageLayout::kContinuous);
   check(kCmdLayoutTwoPage, l == PageLayout::kTwoPage);
   check(kCmdLayoutTwoPageContinuous, l == PageLayout::kTwoPageContinuous);
-  check(kCmdLayoutCoverPage, s->layout.cover_page());
+  check(kCmdLayoutCoverPage, s->t().layout.cover_page());
 
-  const ZoomMode z = s->layout.zoom_mode();
+  const ZoomMode z = s->t().layout.zoom_mode();
   check(kCmdZoomActual, z == ZoomMode::kActualSize);
   check(kCmdZoomFitPage, z == ZoomMode::kFitPage);
   check(kCmdZoomFitWidth, z == ZoomMode::kFitWidth);
@@ -172,11 +183,15 @@ void SyncMenu(FrameData* d) {
                   kCmdZoomFitPage, kCmdZoomFitWidth, kCmdZoomFitVisible,
                   kCmdRotateCW, kCmdRotateCCW})
     enable(id, has);
-  enable(kCmdPageFirst, has && s->page > 0);
-  enable(kCmdPagePrev, has && s->page > 0);
-  enable(kCmdPageNext, has && s->page + 1 < s->doc->page_count());
-  enable(kCmdPageLast, has && s->page + 1 < s->doc->page_count());
-  enable(kCmdEditCopy, has && !s->selection.empty());
+  const bool many_tabs = s->tabs.size() > 1;
+  enable(kCmdTabNext, many_tabs);
+  enable(kCmdTabPrev, many_tabs);
+  enable(kCmdTabClose, many_tabs || has);
+  enable(kCmdPageFirst, has && s->t().page > 0);
+  enable(kCmdPagePrev, has && s->t().page > 0);
+  enable(kCmdPageNext, has && s->t().page + 1 < s->t().doc->page_count());
+  enable(kCmdPageLast, has && s->t().page + 1 < s->t().doc->page_count());
+  enable(kCmdEditCopy, has && !s->t().selection.empty());
 }
 
 // --- child layout ----------------------------------------------------------
@@ -193,6 +208,17 @@ void LayoutChildren(FrameData* d) {
     top = tb;
   } else {
     ShowWindow(d->toolbar, SW_HIDE);
+  }
+
+  // The tab strip earns its space only once a second document is open.
+  if (d->state.tabs.size() > 1 && !d->state.full_screen) {
+    const int th = TabBarHeight(d->tabs);
+    MoveWindow(d->tabs, 0, top, rc.right, th, TRUE);
+    ShowWindow(d->tabs, SW_SHOW);
+    TabBarSync(d->tabs);
+    top += th;
+  } else {
+    ShowWindow(d->tabs, SW_HIDE);
   }
 
   int bottom = rc.bottom;
@@ -255,22 +281,22 @@ void SyncStatus(FrameData* d) {
     return;
   }
 
-  const std::wstring page = L"Page " + std::to_wstring(s->page + 1) + L" of " +
-                            std::to_wstring(s->doc->page_count());
+  const std::wstring page = L"Page " + std::to_wstring(s->t().page + 1) + L" of " +
+                            std::to_wstring(s->t().doc->page_count());
   SendMessageW(d->status, SB_SETTEXTW, 0,
                reinterpret_cast<LPARAM>(page.c_str()));
 
-  const std::wstring zoom = FormatZoom(s->current.scale / s->dpi_scale);
+  const std::wstring zoom = FormatZoom(s->t().current.scale / s->dpi_scale);
   SendMessageW(d->status, SB_SETTEXTW, 1,
                reinterpret_cast<LPARAM>(zoom.c_str()));
 
-  const PageGeometry g = s->doc->geometry(s->page);
+  const PageGeometry g = s->t().doc->geometry(s->t().page);
   wchar_t buf[256];
   swprintf(buf, 256, L"%s   %.2f × %.2f in",
-           Utf8ToWide(s->doc->format_name()).c_str(), g.width_pt / 72.0,
+           Utf8ToWide(s->t().doc->format_name()).c_str(), g.width_pt / 72.0,
            g.height_pt / 72.0);
   std::wstring info = buf;
-  const std::string label = s->doc->page_label(s->page);
+  const std::string label = s->t().doc->page_label(s->t().page);
   if (!label.empty()) info = Utf8ToWide(label) + L"   " + info;
   SendMessageW(d->status, SB_SETTEXTW, 2,
                reinterpret_cast<LPARAM>(info.c_str()));
@@ -280,6 +306,7 @@ void SyncTitle(FrameData* d);
 
 void SyncAll(FrameData* d) {
   ToolbarSyncState(d->toolbar);
+  TabBarSync(d->tabs);
   NavPaneSyncPage(d->nav);
   SyncStatus(d);
   SyncMenu(d);
@@ -292,9 +319,9 @@ void SyncTitle(FrameData* d) {
   if (d->state.has_doc()) {
     // A backend whose pages are separate files names the one being shown,
     // so browsing a folder of images retitles the window as you go.
-    const std::string label = d->state.doc->page_label(d->state.page);
-    title = label.empty() ? d->state.file_name : Utf8ToWide(label);
-    const std::string dt = d->state.doc->title();
+    const std::string label = d->state.t().doc->page_label(d->state.t().page);
+    title = label.empty() ? d->state.t().file_name : Utf8ToWide(label);
+    const std::string dt = d->state.t().doc->title();
     if (!dt.empty()) title = title + L" — " + Utf8ToWide(dt);
     title += L" - ";
   }
@@ -304,24 +331,88 @@ void SyncTitle(FrameData* d) {
 
 // --- document open/close ---------------------------------------------------
 
+// Each tab carries its own render cache, so the budget below is per open
+// document rather than per process. It is smaller than a single-document
+// cache would be, because several can be resident at once.
+constexpr size_t kTabCacheBytes = 128u * 1024 * 1024;
+
+void LayoutChildren(FrameData* d);
+void SyncAll(FrameData* d);
+
+DocumentTab* AddTab(AppState* s) {
+  auto tab = std::make_unique<DocumentTab>();
+  tab->layout.set_dpi_scale(s->dpi_scale);
+  tab->cache = std::make_unique<RenderCache>(s->notify, kTabCacheBytes);
+  s->tabs.push_back(std::move(tab));
+  return s->tabs.back().get();
+}
+
+// Brings `index` to the front and rebuilds the windows around it. The page
+// view and nav pane read whatever tab is active, so they only need telling
+// that it changed.
+void ActivateTab(FrameData* d, int index) {
+  AppState* s = &d->state;
+  index = std::clamp(index, 0, static_cast<int>(s->tabs.size()) - 1);
+  if (index == s->active) return;
+  s->active = index;
+
+  // The find bar belongs to the document, so it follows the tab.
+  d->find_visible = !s->t().find_text.empty() && !s->t().hits.empty();
+
+  LayoutChildren(d);
+  PageViewRelayout(d->view);
+  NavPaneDocumentChanged(d->nav);
+  SyncAll(d);
+  SetFocus(d->view);
+}
+
 void CloseDocument(FrameData* d) {
-  d->state.cache->SetDocument(nullptr);
-  d->state.doc.reset();
-  d->state.layout.set_document(nullptr);
-  d->state.path.clear();
-  d->state.file_name.clear();
-  d->state.page = 0;
-  d->state.selection.clear();
-  d->state.hits.clear();
-  d->state.hit_index = -1;
-  d->state.ResetTextCache();
+  d->state.t().cache->SetDocument(nullptr);
+  d->state.t().doc.reset();
+  d->state.t().layout.set_document(nullptr);
+  d->state.t().path.clear();
+  d->state.t().file_name.clear();
+  d->state.t().page = 0;
+  d->state.t().selection.clear();
+  d->state.t().hits.clear();
+  d->state.t().hit_index = -1;
+  d->state.t().find_text.clear();
+  d->state.t().ResetTextCache();
   PageViewDocumentChanged(d->view);
   NavPaneDocumentChanged(d->nav);
   SyncTitle(d);
   SyncAll(d);
 }
 
-void OpenPath(FrameData* d, const std::wstring& path) {
+// Opens `path`. `in_new_tab` adds a tab and leaves whatever is already
+// open untouched; otherwise the current tab is replaced. A file that fails
+// to open never disturbs the tab the reader is on.
+// Closes one tab. The last one is emptied rather than removed, so there
+// is always a tab to show and no window below needs a null check.
+void CloseTab(FrameData* d, int index) {
+  AppState* s = &d->state;
+  index = std::clamp(index, 0, static_cast<int>(s->tabs.size()) - 1);
+
+  if (s->tabs.size() == 1) {
+    if (s->active == index && s->has_doc()) CloseDocument(d);
+    return;
+  }
+
+  s->tabs.erase(s->tabs.begin() + index);
+  // Keep the neighbour on the right, as a browser does; falling back to
+  // the left when the last tab went.
+  if (s->active > index) s->active -= 1;
+  s->active = std::clamp(s->active, 0, static_cast<int>(s->tabs.size()) - 1);
+
+  d->find_visible = false;
+  LayoutChildren(d);
+  PageViewRelayout(d->view);
+  NavPaneDocumentChanged(d->nav);
+  SyncAll(d);
+  SetFocus(d->view);
+}
+
+void OpenPath(FrameData* d, const std::wstring& path, bool in_new_tab) {
   std::shared_ptr<Document> doc;
   try {
     doc = OpenDocument(path);
@@ -332,41 +423,54 @@ void OpenPath(FrameData* d, const std::wstring& path) {
     return;
   }
 
-  CloseDocument(d);
+  // An empty tab is not worth keeping beside the new document, so a new
+  // tab is only added when one is actually in use.
+  if (in_new_tab && d->state.has_doc()) {
+    AddTab(&d->state);
+    d->state.active = static_cast<int>(d->state.tabs.size()) - 1;
+    d->find_visible = false;
+  } else {
+    CloseDocument(d);
+  }
 
-  d->state.doc = std::move(doc);
-  d->state.path = path;
+  d->state.t().doc = std::move(doc);
+  d->state.t().path = path;
   const size_t slash = path.find_last_of(L"\\/");
-  d->state.file_name =
+  d->state.t().file_name =
       (slash == std::wstring::npos) ? path : path.substr(slash + 1);
 
-  d->state.layout.set_document(d->state.doc.get());
-  d->state.cache->SetDocument(d->state.doc);
-  d->state.text_cache.assign(
-      static_cast<size_t>(d->state.doc->page_count()), {});
-  d->state.text_loaded.assign(
-      static_cast<size_t>(d->state.doc->page_count()), false);
+  d->state.t().layout.set_document(d->state.t().doc.get());
+  d->state.t().cache->SetDocument(d->state.t().doc);
+  d->state.t().text_cache.assign(
+      static_cast<size_t>(d->state.t().doc->page_count()), {});
+  d->state.t().text_loaded.assign(
+      static_cast<size_t>(d->state.t().doc->page_count()), false);
 
   // Unrelated pages are shown one at a time, so next/previous means the
   // next picture rather than a scroll through the whole folder, and the
   // whole picture is fitted rather than just its width. An explicit zoom
   // the user set is left alone.
-  if (d->state.doc->pages_are_independent()) {
-    if (d->state.layout.is_continuous())
-      d->state.layout.set_layout(PageLayout::kSinglePage);
-    if (d->state.layout.zoom_mode() != ZoomMode::kCustom)
-      d->state.layout.set_zoom_mode(ZoomMode::kFitPage);
+  if (d->state.t().doc->pages_are_independent()) {
+    if (d->state.t().layout.is_continuous())
+      d->state.t().layout.set_layout(PageLayout::kSinglePage);
+    if (d->state.t().layout.zoom_mode() != ZoomMode::kCustom)
+      d->state.t().layout.set_zoom_mode(ZoomMode::kFitPage);
   }
 
-  d->state.page = std::clamp(d->state.doc->initial_page(), 0,
-                             d->state.doc->page_count() - 1);
+  d->state.t().page = std::clamp(d->state.t().doc->initial_page(), 0,
+                                 d->state.t().doc->page_count() - 1);
+
+  // Adding a tab can bring the tab strip into view, which changes how much
+  // room the page view has; it has to be re-laid out before the document
+  // is measured against it.
+  LayoutChildren(d);
   PageViewDocumentChanged(d->view);
   NavPaneDocumentChanged(d->nav);
-  if (d->state.page > 0) PageViewScrollToPage(d->view, d->state.page);
+  if (d->state.t().page > 0) PageViewScrollToPage(d->view, d->state.t().page);
   SyncAll(d);
 }
 
-void ShowOpenDialog(FrameData* d) {
+void ShowOpenDialog(FrameData* d, bool in_new_tab) {
   wchar_t file[MAX_PATH * 4]{};
   OPENFILENAMEW ofn{};
   ofn.lStructSize = sizeof(ofn);
@@ -384,27 +488,27 @@ void ShowOpenDialog(FrameData* d) {
   ofn.lpstrFile = file;
   ofn.nMaxFile = MAX_PATH * 4;
   ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER;
-  if (GetOpenFileNameW(&ofn)) OpenPath(d, file);
+  if (GetOpenFileNameW(&ofn)) OpenPath(d, file, in_new_tab);
 }
 
 void ShowProperties(FrameData* d) {
   AppState* s = &d->state;
   if (!s->has_doc()) return;
-  const PageGeometry g = s->doc->geometry(s->page);
+  const PageGeometry g = s->t().doc->geometry(s->t().page);
   std::wstring text;
-  text += L"File: " + s->file_name + L"\n";
-  text += L"Format: " + Utf8ToWide(s->doc->format_name()) + L"\n";
-  const std::string t = s->doc->title();
+  text += L"File: " + s->t().file_name + L"\n";
+  text += L"Format: " + Utf8ToWide(s->t().doc->format_name()) + L"\n";
+  const std::string t = s->t().doc->title();
   if (!t.empty()) text += L"Title: " + Utf8ToWide(t) + L"\n";
-  text += L"Pages: " + std::to_wstring(s->doc->page_count()) + L"\n";
+  text += L"Pages: " + std::to_wstring(s->t().doc->page_count()) + L"\n";
   wchar_t buf[128];
   swprintf(buf, 128, L"Page size: %.2f × %.2f in  (%.0f × %.0f pt)\n",
            g.width_pt / 72.0, g.height_pt / 72.0, g.width_pt, g.height_pt);
   text += buf;
-  const size_t mb = s->cache->bytes() / (1024 * 1024);
+  const size_t mb = s->t().cache->bytes() / (1024 * 1024);
   text += L"Rendered pages cached: " + std::to_wstring(mb) + L" MB\n";
   text += L"Outline: ";
-  text += s->doc->outline().empty() ? L"none" : L"present";
+  text += s->t().doc->outline().empty() ? L"none" : L"present";
   MessageBoxW(d->hwnd, text.c_str(), L"Document Properties",
               MB_OK | MB_ICONINFORMATION);
 }
@@ -435,19 +539,19 @@ void FlattenPage(AppState* s, int page, std::wstring* text,
 
 void RunSearch(FrameData* d) {
   AppState* s = &d->state;
-  s->hits.clear();
-  s->hit_index = -1;
-  if (!s->has_doc() || s->find_text.empty()) return;
+  s->t().hits.clear();
+  s->t().hit_index = -1;
+  if (!s->has_doc() || s->t().find_text.empty()) return;
 
   const std::wstring needle =
-      s->find_case ? s->find_text : Lower(s->find_text);
+      s->t().find_case ? s->t().find_text : Lower(s->t().find_text);
 
-  for (int p = 0; p < s->doc->page_count(); ++p) {
+  for (int p = 0; p < s->t().doc->page_count(); ++p) {
     std::wstring text;
     std::vector<int> run_of_char;
     FlattenPage(s, p, &text, &run_of_char);
     if (text.empty()) continue;
-    const std::wstring hay = s->find_case ? text : Lower(text);
+    const std::wstring hay = s->t().find_case ? text : Lower(text);
 
     size_t at = 0;
     while ((at = hay.find(needle, at)) != std::wstring::npos) {
@@ -456,35 +560,35 @@ void RunSearch(FrameData* d) {
       h.first_run = run_of_char[at];
       const size_t end = std::min(at + needle.size() - 1, run_of_char.size() - 1);
       h.last_run = run_of_char[end];
-      s->hits.push_back(h);
+      s->t().hits.push_back(h);
       at += std::max<size_t>(1, needle.size());
       // A pathological document should not hang the UI.
-      if (s->hits.size() > 20000) return;
+      if (s->t().hits.size() > 20000) return;
     }
   }
 }
 
 void GoToHit(FrameData* d, int delta) {
   AppState* s = &d->state;
-  if (s->hits.empty()) return;
-  if (s->hit_index < 0) {
+  if (s->t().hits.empty()) return;
+  if (s->t().hit_index < 0) {
     // Start from the page being read rather than the top of the document.
-    s->hit_index = 0;
-    for (size_t i = 0; i < s->hits.size(); ++i) {
-      if (s->hits[i].page >= s->page) {
-        s->hit_index = static_cast<int>(i);
+    s->t().hit_index = 0;
+    for (size_t i = 0; i < s->t().hits.size(); ++i) {
+      if (s->t().hits[i].page >= s->t().page) {
+        s->t().hit_index = static_cast<int>(i);
         break;
       }
     }
   } else {
-    const int n = static_cast<int>(s->hits.size());
-    s->hit_index = (s->hit_index + delta % n + n) % n;
+    const int n = static_cast<int>(s->t().hits.size());
+    s->t().hit_index = (s->t().hit_index + delta % n + n) % n;
   }
-  const SearchHit& h = s->hits[s->hit_index];
-  s->page = h.page;
-  s->selection.page = h.page;
-  s->selection.first_run = h.first_run;
-  s->selection.last_run = h.last_run;
+  const SearchHit& h = s->t().hits[s->t().hit_index];
+  s->t().page = h.page;
+  s->t().selection.page = h.page;
+  s->t().selection.first_run = h.first_run;
+  s->t().selection.last_run = h.last_run;
   PageViewEnsureHitVisible(d->view, h);
   SyncAll(d);
   InvalidateRect(d->find, nullptr, FALSE);
@@ -496,9 +600,9 @@ void ShowFindBar(FrameData* d, bool show) {
   if (show) {
     FindBarFocus(d->find);
   } else {
-    d->state.hits.clear();
-    d->state.hit_index = -1;
-    d->state.find_text.clear();
+    d->state.t().hits.clear();
+    d->state.t().hit_index = -1;
+    d->state.t().find_text.clear();
     SetFocus(d->view);
     InvalidateRect(d->view, nullptr, FALSE);
   }
@@ -508,11 +612,11 @@ void ShowFindBar(FrameData* d, bool show) {
 
 void CopySelection(FrameData* d) {
   AppState* s = &d->state;
-  if (s->selection.empty()) return;
-  const auto& runs = s->TextFor(s->selection.page);
+  if (s->t().selection.empty()) return;
+  const auto& runs = s->TextFor(s->t().selection.page);
   std::wstring text;
-  for (int i = s->selection.first_run;
-       i <= s->selection.last_run && i < static_cast<int>(runs.size()); ++i) {
+  for (int i = s->t().selection.first_run;
+       i <= s->t().selection.last_run && i < static_cast<int>(runs.size()); ++i) {
     if (!text.empty()) text += L' ';
     text += Utf8ToWide(runs[i].text);
   }
@@ -534,7 +638,7 @@ void CopySelection(FrameData* d) {
 // --- commands --------------------------------------------------------------
 
 void SetZoomMode(FrameData* d, ZoomMode mode) {
-  d->state.layout.set_zoom_mode(mode);
+  d->state.t().layout.set_zoom_mode(mode);
   PageViewRelayout(d->view);
   SyncAll(d);
 }
@@ -544,7 +648,7 @@ void StepZoom(FrameData* d, bool in) {
   // Acrobat's zoom ladder, so stepping lands on round numbers.
   static const double kStops[] = {0.10, 0.25, 0.50, 0.75, 1.00, 1.25,
                                   1.50, 2.00, 4.00, 8.00, 16.0, 32.0};
-  const double now = s->current.scale / s->dpi_scale;
+  const double now = s->t().current.scale / s->dpi_scale;
   double target = now;
   if (in) {
     for (double v : kStops)
@@ -556,8 +660,8 @@ void StepZoom(FrameData* d, bool in) {
       if (kStops[i] < now * 0.999) { target = kStops[i]; break; }
     if (target == now) target = now / 1.25;
   }
-  s->layout.set_zoom_mode(ZoomMode::kCustom);
-  s->layout.set_zoom(target * s->dpi_scale);
+  s->t().layout.set_zoom_mode(ZoomMode::kCustom);
+  s->t().layout.set_zoom(target * s->dpi_scale);
   PageViewRelayout(d->view);
   SyncAll(d);
 }
@@ -565,8 +669,8 @@ void StepZoom(FrameData* d, bool in) {
 void GoToPage(FrameData* d, int page) {
   AppState* s = &d->state;
   if (!s->has_doc()) return;
-  page = std::clamp(page, 0, s->doc->page_count() - 1);
-  s->page = page;
+  page = std::clamp(page, 0, s->t().doc->page_count() - 1);
+  s->t().page = page;
   PageViewScrollToPage(d->view, page);
   SyncAll(d);
 }
@@ -606,19 +710,22 @@ void OnCommand(FrameData* d, UINT cmd, LPARAM param) {
       SyncAll(d);
       return;
 
-    case kCmdFileOpen: ShowOpenDialog(d); return;
-    case kCmdFileClose: CloseDocument(d); return;
+    // Browsing for a document opens it beside what is already open,
+    // rather than discarding it.
+    case kCmdFileOpen: ShowOpenDialog(d, true); return;
+    case kCmdFileOpenHere: ShowOpenDialog(d, false); return;
+    case kCmdFileClose: CloseTab(d, s->active); return;
     case kCmdFileProperties: ShowProperties(d); return;
     case kCmdFileExit: PostMessageW(d->hwnd, WM_CLOSE, 0, 0); return;
 
     case kCmdEditCopy: CopySelection(d); return;
     case kCmdEditSelectAll:
       if (s->has_doc()) {
-        const auto& runs = s->TextFor(s->page);
+        const auto& runs = s->TextFor(s->t().page);
         if (!runs.empty()) {
-          s->selection.page = s->page;
-          s->selection.first_run = 0;
-          s->selection.last_run = static_cast<int>(runs.size()) - 1;
+          s->t().selection.page = s->t().page;
+          s->t().selection.first_run = 0;
+          s->t().selection.last_run = static_cast<int>(runs.size()) - 1;
           InvalidateRect(d->view, nullptr, FALSE);
           SyncMenu(d);
         }
@@ -630,8 +737,8 @@ void OnCommand(FrameData* d, UINT cmd, LPARAM param) {
       if (param == 1) {
         // Typed into the find box: re-run and jump to the first match.
         RunSearch(d);
-        s->hit_index = -1;
-        if (!s->hits.empty()) GoToHit(d, 0);
+        s->t().hit_index = -1;
+        if (!s->t().hits.empty()) GoToHit(d, 0);
         InvalidateRect(d->find, nullptr, FALSE);
         InvalidateRect(d->view, nullptr, FALSE);
         return;
@@ -655,7 +762,7 @@ void OnCommand(FrameData* d, UINT cmd, LPARAM param) {
         ShowFindBar(d, true);
         return;
       }
-      if (s->hits.empty()) RunSearch(d);
+      if (s->t().hits.empty()) RunSearch(d);
       GoToHit(d, cmd == kCmdFindNext ? 1 : -1);
       return;
     }
@@ -673,8 +780,8 @@ void OnCommand(FrameData* d, UINT cmd, LPARAM param) {
     case kCmdZoomTo: {
       const int percent = static_cast<int>(param);
       if (percent <= 0) return;
-      s->layout.set_zoom_mode(ZoomMode::kCustom);
-      s->layout.set_zoom(percent / 100.0 * s->dpi_scale);
+      s->t().layout.set_zoom_mode(ZoomMode::kCustom);
+      s->t().layout.set_zoom(percent / 100.0 * s->dpi_scale);
       PageViewRelayout(d->view);
       SyncAll(d);
       return;
@@ -682,9 +789,9 @@ void OnCommand(FrameData* d, UINT cmd, LPARAM param) {
 
     case kCmdRotateCW:
     case kCmdRotateCCW:
-      s->layout.set_rotation(s->layout.rotation() +
+      s->t().layout.set_rotation(s->t().layout.rotation() +
                              (cmd == kCmdRotateCW ? 90 : -90));
-      s->cache->Clear();
+      s->t().cache->Clear();
       PageViewRelayout(d->view);
       SyncAll(d);
       return;
@@ -698,23 +805,23 @@ void OnCommand(FrameData* d, UINT cmd, LPARAM param) {
       else if (cmd == kCmdLayoutTwoPage) l = PageLayout::kTwoPage;
       else if (cmd == kCmdLayoutTwoPageContinuous)
         l = PageLayout::kTwoPageContinuous;
-      s->layout.set_layout(l);
-      PageViewScrollToPage(d->view, s->page);
+      s->t().layout.set_layout(l);
+      PageViewScrollToPage(d->view, s->t().page);
       SyncAll(d);
       return;
     }
 
     case kCmdLayoutCoverPage:
-      s->layout.set_cover_page(!s->layout.cover_page());
-      PageViewScrollToPage(d->view, s->page);
+      s->t().layout.set_cover_page(!s->t().layout.cover_page());
+      PageViewScrollToPage(d->view, s->t().page);
       SyncAll(d);
       return;
 
     case kCmdPageFirst: GoToPage(d, 0); return;
-    case kCmdPagePrev: GoToPage(d, s->page - 1); return;
-    case kCmdPageNext: GoToPage(d, s->page + 1); return;
+    case kCmdPagePrev: GoToPage(d, s->t().page - 1); return;
+    case kCmdPageNext: GoToPage(d, s->t().page + 1); return;
     case kCmdPageLast:
-      if (s->has_doc()) GoToPage(d, s->doc->page_count() - 1);
+      if (s->has_doc()) GoToPage(d, s->t().doc->page_count() - 1);
       return;
     case kCmdPageGoto:
       if (param > 0) GoToPage(d, static_cast<int>(param) - 1);
@@ -744,6 +851,26 @@ void OnCommand(FrameData* d, UINT cmd, LPARAM param) {
       SyncAll(d);
       return;
     case kCmdViewFullScreen: ToggleFullScreen(d); return;
+
+    case kCmdTabSelect:
+      ActivateTab(d, static_cast<int>(param));
+      return;
+    case kCmdTabClose:
+      CloseTab(d, s->active);
+      return;
+    case kCmdTabCloseAt:
+      // The index arrives one-based so that zero can still mean "the
+      // active tab".
+      CloseTab(d, param > 0 ? static_cast<int>(param) - 1 : s->active);
+      return;
+    case kCmdTabNext:
+    case kCmdTabPrev: {
+      const int n = static_cast<int>(s->tabs.size());
+      if (n < 2) return;
+      const int step = (cmd == kCmdTabNext) ? 1 : n - 1;
+      ActivateTab(d, (s->active + step) % n);
+      return;
+    }
 
     case kCmdHelpAbout:
       MessageBoxW(
@@ -841,16 +968,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       d->state.dpi_scale = GetDpiForWindow(hwnd) / 96.0;
       d->state.nav_width =
           static_cast<int>(196 * d->state.dpi_scale);
-      d->state.layout.set_dpi_scale(d->state.dpi_scale);
-      d->state.cache = std::make_unique<RenderCache>([hwnd] {
-        // Called on the render thread: only wake the UI thread.
+      d->state.notify = [hwnd] {
+        // Called on a render thread: only wake the UI thread.
         PostMessageW(hwnd, kMsgPageReady, 0, 0);
-      });
+      };
+      // There is always a tab, empty or not, so nothing below has to cope
+      // with there being no active document.
+      AddTab(&d->state);
 
       d->menu = BuildMenu();
       SetMenu(hwnd, d->menu);
 
       d->toolbar = CreateToolbarWindow(hwnd, &d->state);
+      d->tabs = CreateTabBarWindow(hwnd, &d->state);
       d->nav = CreateNavPaneWindow(hwnd, &d->state);
       d->view = CreatePageViewWindow(hwnd, &d->state);
       d->find = CreateFindBarWindow(hwnd, &d->state);
@@ -872,8 +1002,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
 
     case WM_DESTROY:
-      // Stop the render thread before the document it is using goes away.
-      d->state.cache.reset();
+      // Stop every render thread before the documents they are using go
+      // away. Tabs own their caches, so clearing the list does both.
+      d->state.tabs.clear();
       delete d;
       SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
       PostQuitMessage(0);
@@ -922,7 +1053,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_DROPFILES: {
       HDROP drop = reinterpret_cast<HDROP>(wp);
       wchar_t path[MAX_PATH * 4]{};
-      if (DragQueryFileW(drop, 0, path, MAX_PATH * 4)) OpenPath(d, path);
+      // Dropping files is an explicit open too, so each one gets a tab.
+      const UINT dropped = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+      for (UINT i = 0; i < dropped; ++i)
+        if (DragQueryFileW(drop, i, path, MAX_PATH * 4))
+          OpenPath(d, path, true);
       DragFinish(drop);
       SetForegroundWindow(hwnd);
       return 0;
@@ -973,11 +1108,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
     case WM_DPICHANGED: {
       d->state.dpi_scale = HIWORD(wp) / 96.0;
-      d->state.layout.set_dpi_scale(d->state.dpi_scale);
       const RECT* r = reinterpret_cast<RECT*>(lp);
       SetWindowPos(hwnd, nullptr, r->left, r->top, r->right - r->left,
                    r->bottom - r->top, SWP_NOZORDER | SWP_NOACTIVATE);
-      d->state.cache->Clear();
+      // Every tab renders at the new scale, so every cached bitmap is the
+      // wrong size now.
+      for (auto& tab : d->state.tabs) {
+        tab->layout.set_dpi_scale(d->state.dpi_scale);
+        tab->cache->Clear();
+      }
       LayoutChildren(d);
       PageViewRelayout(d->view);
       SyncAll(d);
@@ -993,7 +1132,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 }  // namespace
 
-HWND CreateMainWindow(const std::wstring& open_path) {
+HWND CreateMainWindow(const std::vector<std::wstring>& open_paths) {
   WNDCLASSEXW wc{};
   wc.cbSize = sizeof(wc);
   wc.lpfnWndProc = WndProc;
@@ -1024,9 +1163,15 @@ HWND CreateMainWindow(const std::wstring& open_path) {
   ShowWindow(hwnd, SW_SHOW);
   UpdateWindow(hwnd);
 
-  if (!open_path.empty()) {
-    FrameData* d = Data(hwnd);
-    if (d) OpenPath(d, open_path);
+  FrameData* d = Data(hwnd);
+  if (d) {
+    // The first document fills the tab that is already there; any others
+    // get tabs of their own.
+    bool first = true;
+    for (const std::wstring& path : open_paths) {
+      OpenPath(d, path, !first);
+      first = false;
+    }
   }
   return hwnd;
 }

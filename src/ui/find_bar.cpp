@@ -86,17 +86,17 @@ void Paint(FindData* d, HDC dc) {
   RECT label{t.right + S(d, 12), 0, rc.right - S(d, 40), rc.bottom};
 
   std::wstring text;
-  if (!s->find_text.empty()) {
-    if (s->hits.empty()) {
+  if (!s->t().find_text.empty()) {
+    if (s->t().hits.empty()) {
       text = L"No matches";
     } else {
-      text = std::to_wstring(s->hit_index + 1) + L" of " +
-             std::to_wstring(s->hits.size()) + L" matches";
+      text = std::to_wstring(s->t().hit_index + 1) + L" of " +
+             std::to_wstring(s->t().hits.size()) + L" matches";
     }
   }
 
   SetBkMode(dc, TRANSPARENT);
-  SetTextColor(dc, (!s->find_text.empty() && s->hits.empty()) ? kNoMatch
+  SetTextColor(dc, (!s->t().find_text.empty() && s->t().hits.empty()) ? kNoMatch
                                                               : kText);
   HGDIOBJ oldf = SelectObject(dc, d->font);
   DrawTextW(dc, text.c_str(), -1, &label,
@@ -107,8 +107,8 @@ void Paint(FindData* d, HDC dc) {
 void Submit(FindData* d, bool forward) {
   wchar_t buf[512]{};
   GetWindowTextW(d->edit, buf, 511);
-  d->state->find_text = buf;
-  d->state->find_case =
+  d->state->t().find_text = buf;
+  d->state->t().find_case =
       SendMessageW(d->match_case, BM_GETCHECK, 0, 0) == BST_CHECKED;
   PostMessageW(GetParent(d->hwnd), kMsgCommand,
                forward ? kCmdFindNext : kCmdFindPrev, 0);
@@ -203,7 +203,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // Search as you type, the way a modern find bar behaves.
             wchar_t buf[512]{};
             GetWindowTextW(d->edit, buf, 511);
-            d->state->find_text = buf;
+            d->state->t().find_text = buf;
             PostMessageW(GetParent(hwnd), kMsgCommand, kCmdEditFind, 1);
           }
           return 0;

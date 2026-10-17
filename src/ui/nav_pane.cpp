@@ -68,8 +68,8 @@ void MeasureThumbs(NavData* d) {
 
   const int w = S(d, kThumbWidth);
   int y = S(d, kThumbGap);
-  for (int i = 0; i < s->doc->page_count(); ++i) {
-    const PageGeometry g = s->doc->geometry(i);
+  for (int i = 0; i < s->t().doc->page_count(); ++i) {
+    const PageGeometry g = s->t().doc->geometry(i);
     const double ratio =
         (g.width_pt > 0) ? (g.height_pt / g.width_pt) : (792.0 / 612.0);
     const int h = std::max(16, static_cast<int>(w * ratio));
@@ -128,7 +128,7 @@ void PaintThumbs(NavData* d, HDC dc, const RECT& content) {
 
     RECT box{cx - w / 2, top, cx + w / 2, top + h};
 
-    const bool current = i == s->page;
+    const bool current = i == s->t().page;
     if (current) {
       RECT sel = box;
       InflateRect(&sel, 3, 3);
@@ -143,11 +143,11 @@ void PaintThumbs(NavData* d, HDC dc, const RECT& content) {
     key.page = i;
     key.width = w;
     key.height = h;
-    key.rotation = s->layout.rotation();
+    key.rotation = s->t().layout.rotation();
     wanted.push_back(key);
 
     // Thumbnails are lower priority than the page being read.
-    auto page = s->cache->Get(key, 50 + std::abs(i - s->page));
+    auto page = s->t().cache->Get(key, 50 + std::abs(i - s->t().page));
     if (page) {
       BlitThumb(dc, box, *page);
     } else {
@@ -424,11 +424,11 @@ void NavPaneDocumentChanged(HWND nav) {
                reinterpret_cast<LPARAM>(TVI_ROOT));
   d->outline_pages.clear();
   if (d->state->has_doc())
-    AddOutline(d, d->state->doc->outline(), TVI_ROOT, 0);
+    AddOutline(d, d->state->t().doc->outline(), TVI_ROOT, 0);
 
   // Land on whichever panel the document can actually fill.
   const bool has_outline =
-      d->state->has_doc() && !d->state->doc->outline().empty();
+      d->state->has_doc() && !d->state->t().doc->outline().empty();
   if (!has_outline && d->state->panel == NavPanel::kBookmarks)
     d->state->panel = NavPanel::kThumbnails;
 
@@ -440,7 +440,7 @@ void NavPaneDocumentChanged(HWND nav) {
 void NavPaneSyncPage(HWND nav) {
   NavData* d = Data(nav);
   if (!d || d->state->panel != NavPanel::kThumbnails) return;
-  const int page = d->state->page;
+  const int page = d->state->t().page;
   if (page < 0 || page >= static_cast<int>(d->thumb_y.size())) return;
 
   // Scroll the current page's thumbnail into view.

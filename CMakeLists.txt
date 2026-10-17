@@ -70,6 +70,7 @@ add_executable(vellum WIN32
   src/view/render_cache.cpp
   src/ui/main_window.cpp
   src/ui/toolbar.cpp
+  src/ui/tab_bar.cpp
   src/ui/nav_pane.cpp
   src/ui/page_view.cpp
   src/ui/find_bar.cpp

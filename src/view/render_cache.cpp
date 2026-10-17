@@ -4,7 +4,8 @@
 
 namespace vellum {
 
-RenderCache::RenderCache(Notify notify) : notify_(std::move(notify)) {
+RenderCache::RenderCache(Notify notify, size_t max_bytes)
+    : notify_(std::move(notify)), max_bytes_(max_bytes) {
   worker_ = std::thread([this] { WorkerMain(); });
 }
 
@@ -116,7 +117,7 @@ void RenderCache::Insert(const Key& key,
 }
 
 void RenderCache::TrimLocked() {
-  while (bytes_ > kMaxBytes && lru_.size() > 1) {
+  while (bytes_ > max_bytes_ && lru_.size() > 1) {
     Entry& back = lru_.back();
     bytes_ -= back.bytes;
     index_.erase(back.key);

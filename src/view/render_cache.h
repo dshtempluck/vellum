@@ -43,7 +43,9 @@ class RenderCache {
 
   // `notify` is called from the worker thread whenever a page becomes
   // available, so it must do nothing but wake the UI thread.
-  explicit RenderCache(Notify notify);
+  // `max_bytes` caps resident bitmaps; with one cache per open document
+  // the budget is per document, not per process.
+  explicit RenderCache(Notify notify, size_t max_bytes = kDefaultMaxBytes);
   ~RenderCache();
 
   // Replaces the document and drops everything cached and queued.
@@ -85,7 +87,8 @@ class RenderCache {
 
   // Cap chosen so a full screen of pages at high zoom stays resident
   // without the process growing without bound on a long document.
-  static constexpr size_t kMaxBytes = 320u * 1024 * 1024;
+  static constexpr size_t kDefaultMaxBytes = 320u * 1024 * 1024;
+  size_t max_bytes_ = kDefaultMaxBytes;
 
   Notify notify_;
   std::shared_ptr<Document> doc_;

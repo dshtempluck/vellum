@@ -17,6 +17,11 @@ Opening a picture opens its **folder**: every image beside it becomes a
 page, sorted the way Explorer sorts them, so next and previous step
 through the directory and the thumbnail pane becomes a contact sheet.
 
+Documents open in **tabs**. Browsing for a file opens it beside what is
+already open rather than replacing it, and each tab keeps its own page,
+zoom, layout, rotation, selection and search, so switching back lands you
+exactly where you left off.
+
 ![the viewer](docs/screenshot.png)
 
 ---
@@ -66,6 +71,7 @@ vellum.exe                      # empty, use File > Open
 vellum.exe document.pdf
 vellum.exe scan.djvu
 vellum.exe photo.jpg            # opens the whole folder, starting here
+vellum.exe a.pdf b.djvu c.png   # one tab each
 ```
 
 Drag and drop works, as does opening from Explorer.
@@ -74,7 +80,10 @@ Drag and drop works, as does opening from Explorer.
 
 | | |
 |---|---|
-| `Ctrl+O` / `Ctrl+W` | open / close |
+| `Ctrl+O` | open in a new tab |
+| `Ctrl+Shift+O` | open in the current tab |
+| `Ctrl+W`, `Ctrl+F4` | close tab |
+| `Ctrl+Tab`, `Ctrl+Shift+Tab` | next / previous tab |
 | `Ctrl+0` `Ctrl+1` `Ctrl+2` `Ctrl+3` | fit page, actual size, fit width, fit visible |
 | `Ctrl++` / `Ctrl+-` | zoom in / out |
 | `Ctrl+Shift++` / `Ctrl+Shift+-` | rotate clockwise / counterclockwise |
@@ -89,7 +98,7 @@ Drag and drop works, as does opening from Explorer.
 
 Mouse: wheel scrolls, `Ctrl`+wheel zooms about the pointer, the hand tool
 drags, the marquee tool zooms to a dragged rectangle (click to step zoom,
-`Ctrl`+click to step out).
+`Ctrl`+click to step out). Middle-clicking a tab closes it.
 
 ## Command-line harness
 
@@ -122,8 +131,8 @@ src/
   image/       document.cpp                       JPEG/PNG/... via WIC
   doc/         document.h                         the model the UI sees  (PD)
   view/        layout.cpp  render_cache.cpp       page placement, async render
-  ui/          main_window toolbar nav_pane
-               page_view find_bar app             the viewer              (AV)
+  ui/          main_window toolbar tab_bar
+               nav_pane page_view find_bar app    the viewer              (AV)
 tools/         probe.cpp, generators, sample fetch, capture
 third_party/   pdfium
 samples/       DjVu and PDF test documents
@@ -160,6 +169,11 @@ Three decisions carry most of the weight:
   document model knows a page might be a separate file, which is why a
   folder of pictures gets thumbnails, a page box, zoom, rotation and
   next/previous without a line of image-specific UI code.
+* **A tab owns a document and everything about how it is being read.**
+  The windows render whichever tab is active, so switching is a pointer
+  change rather than a save-and-restore of a dozen fields. Each tab has
+  its own render cache, which bounds memory per document rather than per
+  process.
 
 ### DjVu decoding
 

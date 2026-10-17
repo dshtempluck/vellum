@@ -130,9 +130,9 @@ bool IsChecked(AppState* s, UINT cmd) {
     case kCmdToolSelect: return s->tool == Tool::kSelectText;
     case kCmdToolMarquee: return s->tool == Tool::kMarqueeZoom;
     case kCmdZoomFitPage:
-      return s->layout.zoom_mode() == ZoomMode::kFitPage;
+      return s->t().layout.zoom_mode() == ZoomMode::kFitPage;
     case kCmdZoomFitWidth:
-      return s->layout.zoom_mode() == ZoomMode::kFitWidth;
+      return s->t().layout.zoom_mode() == ZoomMode::kFitWidth;
     case kCmdViewNavPane: return s->nav_visible;
     default: return false;
   }
@@ -144,10 +144,10 @@ bool IsEnabled(AppState* s, UINT cmd) {
   switch (cmd) {
     case kCmdPageFirst:
     case kCmdPagePrev:
-      return s->page > 0;
+      return s->t().page > 0;
     case kCmdPageNext:
     case kCmdPageLast:
-      return s->page + 1 < s->doc->page_count();
+      return s->t().page + 1 < s->t().doc->page_count();
     default:
       return true;
   }
@@ -402,7 +402,7 @@ void Paint(BarData* d, HDC target) {
     if (it.kind == ItemKind::kLabel) {
       // "of N", beside the page box.
       std::wstring text = L"";
-      if (s->has_doc()) text = L"of " + std::to_wstring(s->doc->page_count());
+      if (s->has_doc()) text = L"of " + std::to_wstring(s->t().doc->page_count());
       SetTextColor(dc, kGlyph);
       RECT t = r;
       DrawTextW(dc, text.c_str(), -1, &t,
@@ -449,7 +449,7 @@ void SyncBoxes(BarData* d) {
     // Do not fight the user while they are typing in the box.
     if (GetFocus() != d->page_box) {
       const std::wstring t =
-          s->has_doc() ? std::to_wstring(s->page + 1) : std::wstring();
+          s->has_doc() ? std::to_wstring(s->t().page + 1) : std::wstring();
       SetWindowTextW(d->page_box, t.c_str());
     }
     EnableWindow(d->page_box, s->has_doc());
@@ -458,7 +458,7 @@ void SyncBoxes(BarData* d) {
     HWND edit = GetWindow(d->zoom_box, GW_CHILD);
     if (GetFocus() != d->zoom_box && GetFocus() != edit) {
       const std::wstring t =
-          s->has_doc() ? FormatZoom(s->current.scale / s->dpi_scale)
+          s->has_doc() ? FormatZoom(s->t().current.scale / s->dpi_scale)
                        : std::wstring();
       SetWindowTextW(d->zoom_box, t.c_str());
     }

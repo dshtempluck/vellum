@@ -52,7 +52,7 @@ Size ClientSize(HWND h) {
 // The viewport in document space.
 Rect ViewRect(ViewData* d) {
   const Size c = ClientSize(d->hwnd);
-  return Rect::FromXYWH(d->state->scroll.x, d->state->scroll.y, c.w, c.h);
+  return Rect::FromXYWH(d->state->t().scroll.x, d->state->t().scroll.y, c.w, c.h);
 }
 
 // Centres the viewport horizontally on the sheet holding `p`.
@@ -66,25 +66,25 @@ Rect ViewRect(ViewData* d) {
 void CenterOnPage(ViewData* d, const PagePlacement* p) {
   if (!p) return;
   Rect sheet = p->rect;
-  for (const PagePlacement& other : d->state->current.pages)
+  for (const PagePlacement& other : d->state->t().current.pages)
     if (other.rect.y0 == p->rect.y0) sheet = sheet.Union(other.rect);
   const Size c = ClientSize(d->hwnd);
-  d->state->scroll.x = sheet.x0 + (sheet.width() - c.w) / 2;
+  d->state->t().scroll.x = sheet.x0 + (sheet.width() - c.w) / 2;
 }
 
 void ClampScroll(ViewData* d) {
   const Size c = ClientSize(d->hwnd);
   AppState* s = d->state;
-  const int max_x = std::max(0, s->current.extent.w - c.w);
-  const int max_y = std::max(0, s->current.extent.h - c.h);
-  s->scroll.x = std::clamp<long>(s->scroll.x, 0, max_x);
-  s->scroll.y = std::clamp<long>(s->scroll.y, 0, max_y);
+  const int max_x = std::max(0, s->t().current.extent.w - c.w);
+  const int max_y = std::max(0, s->t().current.extent.h - c.h);
+  s->t().scroll.x = std::clamp<long>(s->t().scroll.x, 0, max_x);
+  s->t().scroll.y = std::clamp<long>(s->t().scroll.y, 0, max_y);
   // Centre the document when it is narrower than the viewport, which is
   // what makes a zoomed-out page sit in the middle rather than top-left.
-  if (s->current.extent.w < c.w)
-    s->scroll.x = -(c.w - s->current.extent.w) / 2;
-  if (s->current.extent.h < c.h)
-    s->scroll.y = -(c.h - s->current.extent.h) / 2;
+  if (s->t().current.extent.w < c.w)
+    s->t().scroll.x = -(c.w - s->t().current.extent.w) / 2;
+  if (s->t().current.extent.h < c.h)
+    s->t().scroll.y = -(c.h - s->t().current.extent.h) / 2;
 }
 
 void UpdateScrollBars(ViewData* d) {
@@ -96,21 +96,21 @@ void UpdateScrollBars(ViewData* d) {
   si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS | SIF_DISABLENOSCROLL;
 
   si.nMin = 0;
-  si.nMax = std::max(0, s->current.extent.h - 1);
+  si.nMax = std::max(0, s->t().current.extent.h - 1);
   si.nPage = static_cast<UINT>(std::max(1, c.h));
-  si.nPos = std::max<long>(0, s->scroll.y);
+  si.nPos = std::max<long>(0, s->t().scroll.y);
   SetScrollInfo(d->hwnd, SB_VERT, &si, TRUE);
 
-  si.nMax = std::max(0, s->current.extent.w - 1);
+  si.nMax = std::max(0, s->t().current.extent.w - 1);
   si.nPage = static_cast<UINT>(std::max(1, c.w));
-  si.nPos = std::max<long>(0, s->scroll.x);
+  si.nPos = std::max<long>(0, s->t().scroll.x);
   SetScrollInfo(d->hwnd, SB_HORZ, &si, TRUE);
 }
 
 void Relayout(ViewData* d, bool keep_position) {
   AppState* s = d->state;
   if (!s->has_doc()) {
-    s->current = Layout();
+    s->t().current = Layout();
     UpdateScrollBars(d);
     InvalidateRect(d->hwnd, nullptr, TRUE);
     return;
@@ -120,16 +120,16 @@ void Relayout(ViewData* d, bool keep_position) {
   // or window resize lands on the same content.
   double frac = 0.0;
   if (keep_position) {
-    const PagePlacement* p = s->current.Find(s->page);
+    const PagePlacement* p = s->t().current.Find(s->t().page);
     if (p && p->rect.height() > 0)
-      frac = static_cast<double>(s->scroll.y - p->rect.y0) / p->rect.height();
+      frac = static_cast<double>(s->t().scroll.y - p->rect.y0) / p->rect.height();
   }
 
-  s->current = s->layout.Build(ClientSize(d->hwnd), s->page);
+  s->t().current = s->t().layout.Build(ClientSize(d->hwnd), s->t().page);
 
-  const PagePlacement* p = s->current.Find(s->page);
+  const PagePlacement* p = s->t().current.Find(s->t().page);
   if (keep_position && p)
-    s->scroll.y = p->rect.y0 + static_cast<long>(frac * p->rect.height());
+    s->t().scroll.y = p->rect.y0 + static_cast<long>(frac * p->rect.height());
   CenterOnPage(d, p);
 
   ClampScroll(d);
@@ -145,20 +145,20 @@ void NotifyFrame(ViewData* d, UINT cmd) {
 void SyncCurrentPage(ViewData* d) {
   AppState* s = d->state;
   if (!s->has_doc()) return;
-  const int page = s->current.DominantPage(ViewRect(d));
-  if (page >= 0 && page != s->page) {
-    s->page = page;
+  const int page = s->t().current.DominantPage(ViewRect(d));
+  if (page >= 0 && page != s->t().page) {
+    s->t().page = page;
     NotifyFrame(d, kCmdNone);  // frame refreshes its page box and nav pane
   }
 }
 
 void ScrollBy(ViewData* d, int dx, int dy) {
   AppState* s = d->state;
-  const POINT before = s->scroll;
-  s->scroll.x += dx;
-  s->scroll.y += dy;
+  const POINT before = s->t().scroll;
+  s->t().scroll.x += dx;
+  s->t().scroll.y += dy;
   ClampScroll(d);
-  if (before.x == s->scroll.x && before.y == s->scroll.y) return;
+  if (before.x == s->t().scroll.x && before.y == s->t().scroll.y) return;
   UpdateScrollBars(d);
   SyncCurrentPage(d);
   InvalidateRect(d->hwnd, nullptr, TRUE);
@@ -167,16 +167,16 @@ void ScrollBy(ViewData* d, int dx, int dy) {
 // In a one-page-at-a-time mode, scrolling past an edge turns the page.
 bool TurnPageIfAtEdge(ViewData* d, int dir) {
   AppState* s = d->state;
-  if (s->layout.is_continuous()) return false;
+  if (s->t().layout.is_continuous()) return false;
   const Size c = ClientSize(d->hwnd);
   if (dir > 0) {
-    if (s->scroll.y + c.h < s->current.extent.h - 1) return false;
-    if (s->page + 1 >= s->doc->page_count()) return false;
+    if (s->t().scroll.y + c.h < s->t().current.extent.h - 1) return false;
+    if (s->t().page + 1 >= s->t().doc->page_count()) return false;
     NotifyFrame(d, kCmdPageNext);
     return true;
   }
-  if (s->scroll.y > 0) return false;
-  if (s->page <= 0) return false;
+  if (s->t().scroll.y > 0) return false;
+  if (s->t().page <= 0) return false;
   NotifyFrame(d, kCmdPagePrev);
   return true;
 }
@@ -184,9 +184,9 @@ bool TurnPageIfAtEdge(ViewData* d, int dir) {
 PageHit HitTest(ViewData* d, POINT client) {
   AppState* s = d->state;
   PageHit hit;
-  const int dx = client.x + s->scroll.x;
-  const int dy = client.y + s->scroll.y;
-  for (const PagePlacement& p : s->current.pages) {
+  const int dx = client.x + s->t().scroll.x;
+  const int dy = client.y + s->t().scroll.y;
+  for (const PagePlacement& p : s->t().current.pages) {
     if (!p.rect.Contains(dx, dy)) continue;
     hit.page = p.page;
     hit.x = static_cast<float>(dx - p.rect.x0) / std::max(1, p.rect.width());
@@ -200,11 +200,11 @@ PageHit HitTest(ViewData* d, POINT client) {
 RECT PageRectToClient(ViewData* d, const PagePlacement& p, const RectF& box) {
   AppState* s = d->state;
   RECT r;
-  r.left = p.rect.x0 + static_cast<int>(box.x0 * p.rect.width()) - s->scroll.x;
-  r.right = p.rect.x0 + static_cast<int>(box.x1 * p.rect.width()) - s->scroll.x;
-  r.top = p.rect.y0 + static_cast<int>(box.y0 * p.rect.height()) - s->scroll.y;
+  r.left = p.rect.x0 + static_cast<int>(box.x0 * p.rect.width()) - s->t().scroll.x;
+  r.right = p.rect.x0 + static_cast<int>(box.x1 * p.rect.width()) - s->t().scroll.x;
+  r.top = p.rect.y0 + static_cast<int>(box.y0 * p.rect.height()) - s->t().scroll.y;
   r.bottom =
-      p.rect.y0 + static_cast<int>(box.y1 * p.rect.height()) - s->scroll.y;
+      p.rect.y0 + static_cast<int>(box.y1 * p.rect.height()) - s->t().scroll.y;
   return r;
 }
 
@@ -304,36 +304,36 @@ void Paint(ViewData* d, HDC target, const RECT& client) {
   HPEN border = CreatePen(PS_SOLID, 1, kPageBorder);
   HGDIOBJ oldpen = SelectObject(dc, border);
 
-  for (const PagePlacement& p : s->current.pages) {
+  for (const PagePlacement& p : s->t().current.pages) {
     if (!p.rect.Intersects(prefetch)) continue;
 
     RenderCache::Key key;
     key.page = p.page;
     key.width = p.rect.width();
     key.height = p.rect.height();
-    key.rotation = s->layout.rotation();
+    key.rotation = s->t().layout.rotation();
     wanted.push_back(key);
 
     const bool on_screen = p.rect.Intersects(view);
     // Visible pages first, then the ones just outside, nearest first.
     const int priority =
-        on_screen ? 0 : 1 + std::abs(p.rect.y0 - static_cast<int>(s->scroll.y));
+        on_screen ? 0 : 1 + std::abs(p.rect.y0 - static_cast<int>(s->t().scroll.y));
 
     RECT dest;
-    dest.left = p.rect.x0 - s->scroll.x;
-    dest.top = p.rect.y0 - s->scroll.y;
-    dest.right = p.rect.x1 - s->scroll.x;
-    dest.bottom = p.rect.y1 - s->scroll.y;
+    dest.left = p.rect.x0 - s->t().scroll.x;
+    dest.top = p.rect.y0 - s->t().scroll.y;
+    dest.right = p.rect.x1 - s->t().scroll.x;
+    dest.bottom = p.rect.y1 - s->t().scroll.y;
 
     if (!on_screen) {
-      s->cache->Get(key, priority);  // warm the cache, draw nothing
+      s->t().cache->Get(key, priority);  // warm the cache, draw nothing
       continue;
     }
 
-    auto page = s->cache->Get(key, priority);
+    auto page = s->t().cache->Get(key, priority);
     if (page) {
       BlitPage(dc, dest, *page);
-    } else if (auto any = s->cache->GetAnySize(p.page, key.rotation)) {
+    } else if (auto any = s->t().cache->GetAnySize(p.page, key.rotation)) {
       // Show the wrong size scaled rather than a blank sheet; it will be
       // replaced as soon as the right size arrives.
       BlitPage(dc, dest, *any);
@@ -347,12 +347,12 @@ void Paint(ViewData* d, HDC target, const RECT& client) {
               dest.bottom + 1);
 
     // Search hits on this page, then the selection on top.
-    if (!s->hits.empty()) {
+    if (!s->t().hits.empty()) {
       const auto& runs = s->TextFor(p.page);
-      for (size_t hi = 0; hi < s->hits.size(); ++hi) {
-        const SearchHit& h = s->hits[hi];
+      for (size_t hi = 0; hi < s->t().hits.size(); ++hi) {
+        const SearchHit& h = s->t().hits[hi];
         if (h.page != p.page) continue;
-        const bool current = static_cast<int>(hi) == s->hit_index;
+        const bool current = static_cast<int>(hi) == s->t().hit_index;
         for (int ri = h.first_run;
              ri <= h.last_run && ri < static_cast<int>(runs.size()); ++ri) {
           RECT r = PageRectToClient(d, p, runs[ri].box);
@@ -368,10 +368,10 @@ void Paint(ViewData* d, HDC target, const RECT& client) {
       }
     }
 
-    if (s->selection.page == p.page && !s->selection.empty()) {
+    if (s->t().selection.page == p.page && !s->t().selection.empty()) {
       const auto& runs = s->TextFor(p.page);
-      for (int ri = s->selection.first_run;
-           ri <= s->selection.last_run && ri < static_cast<int>(runs.size());
+      for (int ri = s->t().selection.first_run;
+           ri <= s->t().selection.last_run && ri < static_cast<int>(runs.size());
            ++ri) {
         RECT r = PageRectToClient(d, p, runs[ri].box);
         HBRUSH hb = CreateSolidBrush(kSelection);
@@ -401,7 +401,7 @@ void Paint(ViewData* d, HDC target, const RECT& client) {
   }
 
   // Drop requests for pages that have scrolled far away.
-  s->cache->DropPendingExcept(wanted);
+  s->t().cache->DropPendingExcept(wanted);
 
   BitBlt(target, 0, 0, client.right, client.bottom, dc, 0, 0, SRCCOPY);
   SelectObject(dc, old);
@@ -416,14 +416,14 @@ void OnLButtonDown(ViewData* d, POINT pt) {
 
   d->dragging = true;
   d->drag_start = pt;
-  d->drag_scroll = s->scroll;
+  d->drag_scroll = s->t().scroll;
   SetCapture(d->hwnd);
 
   if (s->tool == Tool::kMarqueeZoom) {
     d->marquee = RECT{pt.x, pt.y, pt.x, pt.y};
   } else if (s->tool == Tool::kSelectText) {
     d->sel_anchor = HitTest(d, pt);
-    s->selection.clear();
+    s->t().selection.clear();
     InvalidateRect(d->hwnd, nullptr, FALSE);
   }
 }
@@ -436,8 +436,8 @@ void OnMouseMove(ViewData* d, POINT pt) {
     case Tool::kHand: {
       const int dx = d->drag_start.x - pt.x;
       const int dy = d->drag_start.y - pt.y;
-      s->scroll.x = d->drag_scroll.x + dx;
-      s->scroll.y = d->drag_scroll.y + dy;
+      s->t().scroll.x = d->drag_scroll.x + dx;
+      s->t().scroll.y = d->drag_scroll.y + dy;
       ClampScroll(d);
       UpdateScrollBars(d);
       SyncCurrentPage(d);
@@ -459,9 +459,9 @@ void OnMouseMove(ViewData* d, POINT pt) {
       const int a = NearestRun(runs, d->sel_anchor.x, d->sel_anchor.y);
       const int b = NearestRun(runs, now.x, now.y);
       if (a < 0 || b < 0) break;
-      s->selection.page = now.page;
-      s->selection.first_run = std::min(a, b);
-      s->selection.last_run = std::max(a, b);
+      s->t().selection.page = now.page;
+      s->t().selection.first_run = std::min(a, b);
+      s->t().selection.last_run = std::max(a, b);
       InvalidateRect(d->hwnd, nullptr, FALSE);
       break;
     }
@@ -498,16 +498,16 @@ void OnLButtonUp(ViewData* d, POINT pt) {
   // Zoom so the dragged rectangle fills the viewport, keeping its centre.
   const double factor =
       std::min(static_cast<double>(c.w) / mw, static_cast<double>(c.h) / mh);
-  const double center_x = s->scroll.x + (m.left + m.right) * 0.5;
-  const double center_y = s->scroll.y + (m.top + m.bottom) * 0.5;
+  const double center_x = s->t().scroll.x + (m.left + m.right) * 0.5;
+  const double center_y = s->t().scroll.y + (m.top + m.bottom) * 0.5;
 
-  s->layout.set_zoom_mode(ZoomMode::kCustom);
-  s->layout.set_zoom(s->current.scale * factor);
-  const double ratio = s->layout.zoom() / std::max(1e-9, s->current.scale);
+  s->t().layout.set_zoom_mode(ZoomMode::kCustom);
+  s->t().layout.set_zoom(s->t().current.scale * factor);
+  const double ratio = s->t().layout.zoom() / std::max(1e-9, s->t().current.scale);
 
   Relayout(d, false);
-  s->scroll.x = static_cast<long>(center_x * ratio - c.w * 0.5);
-  s->scroll.y = static_cast<long>(center_y * ratio - c.h * 0.5);
+  s->t().scroll.x = static_cast<long>(center_x * ratio - c.w * 0.5);
+  s->t().scroll.y = static_cast<long>(center_y * ratio - c.h * 0.5);
   ClampScroll(d);
   UpdateScrollBars(d);
   SyncCurrentPage(d);
@@ -523,16 +523,16 @@ void OnWheel(ViewData* d, int delta, UINT keys, POINT screen_pt) {
     // Zoom about the pointer, so the content under the cursor stays put.
     POINT pt = screen_pt;
     ScreenToClient(d->hwnd, &pt);
-    const double before = s->current.scale;
+    const double before = s->t().current.scale;
     const double step = delta > 0 ? 1.15 : 1.0 / 1.15;
-    s->layout.set_zoom_mode(ZoomMode::kCustom);
-    s->layout.set_zoom(before * step);
-    const double doc_x = s->scroll.x + pt.x;
-    const double doc_y = s->scroll.y + pt.y;
+    s->t().layout.set_zoom_mode(ZoomMode::kCustom);
+    s->t().layout.set_zoom(before * step);
+    const double doc_x = s->t().scroll.x + pt.x;
+    const double doc_y = s->t().scroll.y + pt.y;
     Relayout(d, false);
-    const double ratio = s->current.scale / std::max(1e-9, before);
-    s->scroll.x = static_cast<long>(doc_x * ratio - pt.x);
-    s->scroll.y = static_cast<long>(doc_y * ratio - pt.y);
+    const double ratio = s->t().current.scale / std::max(1e-9, before);
+    s->t().scroll.x = static_cast<long>(doc_x * ratio - pt.x);
+    s->t().scroll.y = static_cast<long>(doc_y * ratio - pt.y);
     ClampScroll(d);
     UpdateScrollBars(d);
     SyncCurrentPage(d);
@@ -605,9 +605,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         default: return 0;
       }
       if (vert)
-        ScrollBy(d, 0, pos - d->state->scroll.y);
+        ScrollBy(d, 0, pos - d->state->t().scroll.y);
       else
-        ScrollBy(d, pos - d->state->scroll.x, 0);
+        ScrollBy(d, pos - d->state->t().scroll.x, 0);
       return 0;
     }
 
@@ -658,11 +658,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case VK_LEFT: ScrollBy(d, -48, 0); return 0;
         case VK_HOME:
           if (ctrl) NotifyFrame(d, kCmdPageFirst);
-          else ScrollBy(d, 0, -s->current.extent.h);
+          else ScrollBy(d, 0, -s->t().current.extent.h);
           return 0;
         case VK_END:
           if (ctrl) NotifyFrame(d, kCmdPageLast);
-          else ScrollBy(d, 0, s->current.extent.h);
+          else ScrollBy(d, 0, s->t().current.extent.h);
           return 0;
         case VK_SPACE:
           if (!TurnPageIfAtEdge(d, 1)) ScrollBy(d, 0, c.h - 40);
@@ -704,7 +704,7 @@ HWND CreatePageViewWindow(HWND parent, AppState* state) {
 void PageViewDocumentChanged(HWND view) {
   ViewData* d = Data(view);
   if (!d) return;
-  d->state->scroll = POINT{0, 0};
+  d->state->t().scroll = POINT{0, 0};
   Relayout(d, false);
 }
 
@@ -718,12 +718,12 @@ void PageViewScrollToPage(HWND view, int page) {
   ViewData* d = Data(view);
   if (!d || !d->state->has_doc()) return;
   AppState* s = d->state;
-  s->page = std::clamp(page, 0, s->doc->page_count() - 1);
+  s->t().page = std::clamp(page, 0, s->t().doc->page_count() - 1);
 
   // In a paged mode the layout holds only the current sheet, so it has to
   // be rebuilt before the page exists to scroll to.
-  if (!s->layout.is_continuous()) {
-    s->scroll = POINT{0, 0};
+  if (!s->t().layout.is_continuous()) {
+    s->t().scroll = POINT{0, 0};
     Relayout(d, false);
     return;
   }
@@ -731,14 +731,14 @@ void PageViewScrollToPage(HWND view, int page) {
   // A fit mode sizes pages against the anchor page. When pages differ in
   // size -- a folder of pictures, or a document with a landscape plate --
   // arriving at a new page means refitting to it.
-  if (s->layout.zoom_mode() != ZoomMode::kCustom) Relayout(d, false);
+  if (s->t().layout.zoom_mode() != ZoomMode::kCustom) Relayout(d, false);
 
-  const PagePlacement* p = s->current.Find(s->page);
+  const PagePlacement* p = s->t().current.Find(s->t().page);
   if (!p) {
     Relayout(d, false);
     return;
   }
-  s->scroll.y = p->rect.y0 - LayoutEngine::kPageGap;
+  s->t().scroll.y = p->rect.y0 - LayoutEngine::kPageGap;
   CenterOnPage(d, p);
   ClampScroll(d);
   UpdateScrollBars(d);
@@ -750,10 +750,10 @@ void PageViewEnsureHitVisible(HWND view, const SearchHit& hit) {
   if (!d || !d->state->has_doc()) return;
   AppState* s = d->state;
 
-  if (s->page != hit.page || !s->layout.is_continuous())
+  if (s->t().page != hit.page || !s->t().layout.is_continuous())
     PageViewScrollToPage(view, hit.page);
 
-  const PagePlacement* p = s->current.Find(hit.page);
+  const PagePlacement* p = s->t().current.Find(hit.page);
   if (!p) return;
   const auto& runs = s->TextFor(hit.page);
   if (hit.first_run >= static_cast<int>(runs.size())) return;
@@ -765,10 +765,10 @@ void PageViewEnsureHitVisible(HWND view, const SearchHit& hit) {
 
   // Put the hit a third of the way down, which reads better than pinning
   // it to the top edge.
-  if (y < s->scroll.y + 40 || y > s->scroll.y + c.h - 40)
-    s->scroll.y = y - c.h / 3;
-  if (x < s->scroll.x || x > s->scroll.x + c.w - 40)
-    s->scroll.x = x - c.w / 3;
+  if (y < s->t().scroll.y + 40 || y > s->t().scroll.y + c.h - 40)
+    s->t().scroll.y = y - c.h / 3;
+  if (x < s->t().scroll.x || x > s->t().scroll.x + c.w - 40)
+    s->t().scroll.x = x - c.w / 3;
 
   ClampScroll(d);
   UpdateScrollBars(d);

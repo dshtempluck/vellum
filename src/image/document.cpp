@@ -73,22 +73,28 @@ int ReadExifOrientation(IWICBitmapFrameDecode* frame) {
   Com<IWICMetadataQueryReader> reader;
   if (FAILED(frame->GetMetadataQueryReader(reader.put())) || !reader) return 1;
 
-  // JPEG and TIFF put the tag in different places.
+  // JPEG hangs the tag off its APP1 segment; TIFF keeps it in the IFD
+  // directly. Both are tried, in that order.
   static const wchar_t* kPaths[] = {L"/app1/ifd/{ushort=274}",
                                     L"/ifd/{ushort=274}"};
   for (const wchar_t* path : kPaths) {
     PROPVARIANT v;
     PropVariantInit(&v);
-    if (SUCCEEDED(reader->GetMetadataByName(path, &v))) {
-      int value = 1;
+    const bool ok = SUCCEEDED(reader->GetMetadataByName(path, &v));
+
+    // A query can succeed and still carry nothing, so the value counts
+    // only when the variant actually holds an integer. Treating an empty
+    // result as "upright" would stop the search here and never reach the
+    // path that does have the tag.
+    int value = 0;
+    if (ok) {
       if (v.vt == VT_UI2) value = v.uiVal;
       else if (v.vt == VT_UI4) value = static_cast<int>(v.ulVal);
       else if (v.vt == VT_I4) value = v.lVal;
-      PropVariantClear(&v);
-      if (value >= 1 && value <= 8) return value;
-    } else {
-      PropVariantClear(&v);
+      else if (v.vt == VT_I2) value = v.iVal;
     }
+    PropVariantClear(&v);
+    if (value >= 1 && value <= 8) return value;
   }
   return 1;
 }

@@ -8,6 +8,16 @@ if(NOT WIN32)
   message(FATAL_ERROR "vellum targets Windows (Win32 + GDI)")
 endif()
 
+# Source-based coverage, which needs clang-cl rather than cl.
+option(VELLUM_COVERAGE "Instrument for llvm-cov coverage" OFF)
+if(VELLUM_COVERAGE)
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR "VELLUM_COVERAGE needs clang-cl")
+  endif()
+  add_compile_options(-fprofile-instr-generate -fcoverage-mapping)
+  add_link_options(-fprofile-instr-generate -fcoverage-mapping)
+endif()
+
 if(MSVC)
   add_compile_options(/W4 /permissive- /Zc:preprocessor /utf-8 /EHsc /MP)
   # Narrowing and signed/unsigned noise from the codec maths would drown
@@ -32,6 +42,8 @@ add_library(vellum_core STATIC
   src/djvu/document.cpp
   src/image/document.cpp
   src/doc/document.cpp
+  src/view/layout.cpp
+  src/view/render_cache.cpp
 )
 target_include_directories(vellum_core PUBLIC src)
 # Still images decode through the Windows Imaging Component.
@@ -66,8 +78,6 @@ target_link_libraries(vellum_probe PRIVATE vellum_core)
 # The viewer.
 # ---------------------------------------------------------------------------
 add_executable(vellum WIN32
-  src/view/layout.cpp
-  src/view/render_cache.cpp
   src/ui/main_window.cpp
   src/ui/toolbar.cpp
   src/ui/tab_bar.cpp
@@ -95,3 +105,46 @@ if(DEFINED VELLUM_PDFIUM_DLL AND EXISTS "${VELLUM_PDFIUM_DLL}")
             "${VELLUM_PDFIUM_DLL}" "$<TARGET_FILE_DIR:vellum_probe>"
     COMMENT "Staging pdfium.dll next to vellum_probe.exe")
 endif()
+
+# ---------------------------------------------------------------------------
+# Tests. Everything except the Win32 windows is covered here; the UI needs a
+# running message loop and is exercised by tools/screenshot.ps1 instead.
+# ---------------------------------------------------------------------------
+enable_testing()
+
+add_executable(vellum_tests
+  tests/main.cpp
+  tests/fixtures.cpp
+  tests/test_core.cpp
+  tests/test_iff.cpp
+  tests/test_zp_bzz.cpp
+  tests/test_codecs.cpp
+  tests/test_djvu_document.cpp
+  tests/test_layout.cpp
+  tests/test_render_cache.cpp
+  tests/test_dispatch.cpp
+  tests/test_image.cpp
+  tests/test_pdf.cpp
+  tests/test_robustness.cpp
+)
+target_link_libraries(vellum_tests PRIVATE vellum_core)
+target_include_directories(vellum_tests PRIVATE third_party/doctest tests)
+
+# doctest specialises std::tuple, which the current MSVC library objects
+# to. It is vendored code, so the warning is silenced rather than patched.
+if(MSVC)
+  target_compile_options(vellum_tests PRIVATE /wd5285)
+endif()
+
+# The suite locates the sample corpus relative to the source tree.
+target_compile_definitions(vellum_tests PRIVATE
+  VELLUM_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
+if(DEFINED VELLUM_PDFIUM_DLL AND EXISTS "${VELLUM_PDFIUM_DLL}")
+  add_custom_command(TARGET vellum_tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${VELLUM_PDFIUM_DLL}" "$<TARGET_FILE_DIR:vellum_tests>"
+    COMMENT "Staging pdfium.dll next to vellum_tests.exe")
+endif()
+
+add_test(NAME vellum_tests COMMAND vellum_tests)

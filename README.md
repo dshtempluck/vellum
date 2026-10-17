@@ -133,7 +133,8 @@ src/
   view/        layout.cpp  render_cache.cpp       page placement, async render
   ui/          main_window toolbar tab_bar
                nav_pane page_view find_bar app    the viewer              (AV)
-tools/         probe.cpp, generators, sample fetch, capture
+tests/         unit tests, fixtures, a fake Document
+tools/         probe.cpp, generators, sample fetch, capture, coverage
 third_party/   pdfium
 samples/       DjVu and PDF test documents
 docs/          reverse-engineering.md
@@ -203,14 +204,60 @@ that are supported instead of failing.
 
 ```powershell
 .\build.ps1
-.\tools\fetch-samples.ps1
-foreach ($f in Get-ChildItem samples\*.djvu, samples\pdf\*.pdf) {
-  .\build\vellum_probe.exe all $f.FullName 700 "$env:TEMP\out\$($f.BaseName)"
-}
+.\tools\fetch-samples.ps1        # once, for the codec tests
+.\build\vellum_tests.exe
 ```
 
-All 220 pages decode and render: 219 DjVu pages across the six fetched
-documents, plus the generated PDF.
+120 test cases, 7,743 assertions, about two seconds. Most of the suite is
+hermetic: BMP, TIFF, PDF and IFF containers are simple enough to build in
+memory, so they are constructed by the fixtures rather than committed.
+The JB2 and IW44 tests need real encoded streams and use the fetched
+corpus, skipping with a note when it is absent.
+
+What the tests are actually pinning down, beyond line counts:
+
+* **Channel order**, against a documented producer. A PDF painted pure red
+  must arrive as `(0, 0, 255)`, because `Pixmap` is BGR. An eye on a
+  downscaled screenshot is not a good enough check for this, as an earlier
+  swapped-channel export in the probe demonstrated.
+* **Row padding.** Rasters pad to four bytes, and a page whose width is not
+  a multiple of four would otherwise shear when GDI blits it.
+* **Malformed input.** Real documents are truncated at forty points,
+  byte-flipped sixty times, and have their chunk lengths set to absurd
+  values; every case must open or report an error, never crash or hang.
+* **Layout against the document model.** A fake Document supplies pages of
+  differing sizes, so the fit modes, two-up spreads and mixed-orientation
+  centring are checked without decoding anything.
+* **The render cache's threading**: eviction under a budget, dropped
+  requests, a backend that throws, and destruction with work outstanding.
+
+### Coverage
+
+```powershell
+.\tools\coverage.ps1             # add -Html for an annotated report
+```
+
+Uses clang-cl's source-based instrumentation and `llvm-cov`, building into
+`build-coverage/` so the ordinary MSVC build is untouched. The script picks
+the newest MSVC toolset the installed Clang can actually compile against,
+since the MSVC standard library refuses an older one.
+
+Current figures, for everything except the Win32 windows:
+
+| | |
+|---|---|
+| Lines | **94.2%** (176 of 3,007 missed) |
+| Functions | **98.0%** |
+| Regions | 90.8% |
+| Branches | 80.4% |
+
+The `src/ui/` layer is excluded rather than counted as missed. Its ~4,000
+lines are window procedures and GDI painting that need a message loop, a
+desktop and a focused window; `tools/screenshot.ps1` drives the real
+application instead, launching it with documents and injecting commands.
+Most of what remains uncovered elsewhere is error handling that needs the
+operating system to fail: a read that returns short, a file that cannot be
+sized.
 
 ## Licensing
 
